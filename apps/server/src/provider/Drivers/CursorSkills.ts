@@ -473,35 +473,35 @@ const CACHE_COMPLETE_MARKER = ".cache-complete";
 const cursorLocalPluginInstalls = Effect.fn("cursorLocalPluginInstalls")(function* (input: {
   readonly userHome: string;
   readonly budget: CursorSkillScanBudget;
-}): Effect.fn.Return<
-  ReadonlyArray<{ readonly directory: string; readonly scope: "user" }>,
-  never,
-  FileSystem.FileSystem | Path.Path
-> {
+  readonly inspect: (
+    directory: string,
+  ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path>;
+}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const installs: Array<{ directory: string; scope: "user" }> = [];
   const localRoot = path.join(input.userHome, ".cursor", "plugins", "local");
   const resolvedLocalRoot = yield* orUndefined(fileSystem.realPath(localRoot), input.budget);
   const localEntries = yield* listDirectoryNames(localRoot, input.budget);
-  if (!resolvedLocalRoot || !localEntries) return installs;
+  if (!resolvedLocalRoot || !localEntries) return;
   for (const entry of localEntries) {
-    if (!takeScanEntry(input.budget)) break;
+    if (!takeScanEntry(input.budget)) return;
     if (entry.startsWith(".")) continue;
     const child = path.join(localRoot, entry);
     const info = yield* orUndefined(fileSystem.stat(child), input.budget);
     if (info?.type !== "Directory") continue;
     const resolvedChild = yield* orUndefined(fileSystem.realPath(child), input.budget);
     if (!resolvedChild || !isPathInside(resolvedLocalRoot, resolvedChild, path)) continue;
-    installs.push({ directory: child, scope: "user" });
+    yield* input.inspect(child);
+    if (input.budget.exhausted) return;
   }
-  return installs;
 });
 
 const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(function* (input: {
   readonly cacheRoot: string;
   readonly budget: CursorSkillScanBudget;
-  readonly addInstall: (directory: string) => void;
+  readonly inspect: (
+    directory: string,
+  ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path>;
 }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -548,7 +548,10 @@ const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(fun
         }
       }
       const [onlyCompleted] = completed;
-      if (completed.length === 1 && onlyCompleted) input.addInstall(onlyCompleted);
+      if (completed.length === 1 && onlyCompleted) {
+        yield* input.inspect(onlyCompleted);
+        if (input.budget.exhausted) return;
+      }
     }
   }
 });
@@ -583,26 +586,19 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     if (budget.exhausted) break;
     remember(yield* discoverSkillsInRoot({ ...root, budget }));
   }
+  const inspectInstall = (directory: string) =>
+    Effect.gen(function* () {
+      remember(yield* discoverSkillsInPlugin({ directory, scope: "user", budget }));
+    });
   if (!budget.exhausted) {
-    const localInstalls = yield* cursorLocalPluginInstalls({ userHome, budget });
-    for (const install of localInstalls) {
-      if (budget.exhausted) break;
-      remember(yield* discoverSkillsInPlugin({ ...install, budget }));
-    }
+    yield* cursorLocalPluginInstalls({ userHome, budget, inspect: inspectInstall });
   }
   if (!budget.exhausted) {
-    const cacheInstalls: Array<{ directory: string; scope: "user" }> = [];
     yield* addCompletedCachePlugins({
       cacheRoot: path.join(userHome, ".cursor", "plugins", "cache"),
       budget,
-      addInstall: (directory) => {
-        cacheInstalls.push({ directory, scope: "user" });
-      },
+      inspect: inspectInstall,
     });
-    for (const install of cacheInstalls) {
-      if (budget.exhausted) break;
-      remember(yield* discoverSkillsInPlugin({ ...install, budget }));
-    }
   }
   return {
     skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),

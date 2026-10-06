@@ -593,6 +593,23 @@ describe("Cursor skills", () => {
           path.join(skillDirectory, "SKILL.md"),
           "---\ndescription: local\n---\n",
         );
+        const earlySkill = path.join(
+          userHome,
+          ".cursor",
+          "plugins",
+          "cache",
+          "mkt",
+          "a-early",
+          "sha",
+          "skills",
+          "cache-kept",
+        );
+        yield* fileSystem.makeDirectory(earlySkill, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(earlySkill, "..", "..", ".cache-complete"), "");
+        yield* fileSystem.writeFileString(
+          path.join(earlySkill, "SKILL.md"),
+          "---\ndescription: cache\n---\n",
+        );
         const versions = path.join(userHome, ".cursor", "plugins", "cache", "mkt", "bulk");
         yield* fileSystem.makeDirectory(versions, { recursive: true });
         yield* Effect.sync(() => {
@@ -602,7 +619,47 @@ describe("Cursor skills", () => {
         });
 
         const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
-        expect(skills.map((skill) => skill.name)).toEqual(["local-kept"]);
+        expect(skills.map((skill) => skill.name)).toEqual(["cache-kept", "local-kept"]);
+        expect(
+          (yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Failure");
+      }),
+    ));
+
+  it("reads an accepted local plugin before later entries exhaust the scan", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-plugin-local-budget-home-",
+          })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const skillDirectory = path.join(
+          userHome,
+          ".cursor",
+          "plugins",
+          "local",
+          "a-kept",
+          "skills",
+          "early",
+        );
+        yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skillDirectory, "SKILL.md"),
+          "---\ndescription: early\n---\n",
+        );
+        const localRoot = path.join(userHome, ".cursor", "plugins", "local");
+        yield* Effect.sync(() => {
+          for (let index = 0; index < 10_000; index += 1) {
+            NodeFS.mkdirSync(path.join(localRoot, `z${index}`));
+          }
+        });
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+        expect(skills.map((skill) => skill.name)).toEqual(["early"]);
         expect(
           (yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(Effect.result))._tag,
         ).toBe("Failure");
