@@ -470,7 +470,7 @@ const listDirectoryNames = Effect.fn("listCursorPluginDirectoryNames")(function*
 
 const CACHE_COMPLETE_MARKER = ".cache-complete";
 
-const cursorPluginInstalls = Effect.fn("cursorPluginInstalls")(function* (input: {
+const cursorLocalPluginInstalls = Effect.fn("cursorLocalPluginInstalls")(function* (input: {
   readonly userHome: string;
   readonly budget: CursorSkillScanBudget;
 }): Effect.fn.Return<
@@ -481,35 +481,20 @@ const cursorPluginInstalls = Effect.fn("cursorPluginInstalls")(function* (input:
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const installs: Array<{ directory: string; scope: "user" }> = [];
-  const seen = new Set<string>();
-  const addInstall = (directory: string) => {
-    const key = path.resolve(directory);
-    if (seen.has(key)) return;
-    seen.add(key);
-    installs.push({ directory, scope: "user" });
-  };
-
   const localRoot = path.join(input.userHome, ".cursor", "plugins", "local");
   const resolvedLocalRoot = yield* orUndefined(fileSystem.realPath(localRoot), input.budget);
   const localEntries = yield* listDirectoryNames(localRoot, input.budget);
-  if (resolvedLocalRoot && localEntries) {
-    for (const entry of localEntries) {
-      if (!takeScanEntry(input.budget)) break;
-      if (entry.startsWith(".")) continue;
-      const child = path.join(localRoot, entry);
-      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
-      if (info?.type !== "Directory") continue;
-      const resolvedChild = yield* orUndefined(fileSystem.realPath(child), input.budget);
-      if (!resolvedChild || !isPathInside(resolvedLocalRoot, resolvedChild, path)) continue;
-      addInstall(child);
-    }
+  if (!resolvedLocalRoot || !localEntries) return installs;
+  for (const entry of localEntries) {
+    if (!takeScanEntry(input.budget)) break;
+    if (entry.startsWith(".")) continue;
+    const child = path.join(localRoot, entry);
+    const info = yield* orUndefined(fileSystem.stat(child), input.budget);
+    if (info?.type !== "Directory") continue;
+    const resolvedChild = yield* orUndefined(fileSystem.realPath(child), input.budget);
+    if (!resolvedChild || !isPathInside(resolvedLocalRoot, resolvedChild, path)) continue;
+    installs.push({ directory: child, scope: "user" });
   }
-
-  yield* addCompletedCachePlugins({
-    cacheRoot: path.join(input.userHome, ".cursor", "plugins", "cache"),
-    budget: input.budget,
-    addInstall,
-  });
   return installs;
 });
 
@@ -520,6 +505,8 @@ const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(fun
 }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const resolvedCacheRoot = yield* orUndefined(fileSystem.realPath(input.cacheRoot), input.budget);
+  if (!resolvedCacheRoot) return;
   // The SDK marks a finished cache install with .cache-complete and leaves old
   // SHAs on disk. Several completed versions are ambiguous, so only one is used.
   const marketplaces = yield* listDirectoryNames(input.cacheRoot, input.budget);
@@ -551,7 +538,14 @@ const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(fun
           fileSystem.stat(path.join(versionDirectory, CACHE_COMPLETE_MARKER)),
           input.budget,
         );
-        if (marker?.type === "File") completed.push(versionDirectory);
+        if (marker?.type !== "File") continue;
+        const resolvedVersion = yield* orUndefined(
+          fileSystem.realPath(versionDirectory),
+          input.budget,
+        );
+        if (resolvedVersion && isPathInside(resolvedCacheRoot, resolvedVersion, path)) {
+          completed.push(versionDirectory);
+        }
       }
       const [onlyCompleted] = completed;
       if (completed.length === 1 && onlyCompleted) input.addInstall(onlyCompleted);
@@ -590,8 +584,22 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     remember(yield* discoverSkillsInRoot({ ...root, budget }));
   }
   if (!budget.exhausted) {
-    const installs = yield* cursorPluginInstalls({ userHome, budget });
-    for (const install of installs) {
+    const localInstalls = yield* cursorLocalPluginInstalls({ userHome, budget });
+    for (const install of localInstalls) {
+      if (budget.exhausted) break;
+      remember(yield* discoverSkillsInPlugin({ ...install, budget }));
+    }
+  }
+  if (!budget.exhausted) {
+    const cacheInstalls: Array<{ directory: string; scope: "user" }> = [];
+    yield* addCompletedCachePlugins({
+      cacheRoot: path.join(userHome, ".cursor", "plugins", "cache"),
+      budget,
+      addInstall: (directory) => {
+        cacheInstalls.push({ directory, scope: "user" });
+      },
+    });
+    for (const install of cacheInstalls) {
       if (budget.exhausted) break;
       remember(yield* discoverSkillsInPlugin({ ...install, budget }));
     }
