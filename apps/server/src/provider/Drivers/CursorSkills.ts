@@ -273,12 +273,27 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
 
 const decodePluginJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
+const takeScanEntry = (budget: CursorSkillScanBudget): boolean => {
+  if (budget.exhausted || budget.remainingEntries === 0) {
+    budget.exhausted = true;
+    return false;
+  }
+  budget.remainingEntries -= 1;
+  return true;
+};
+
 const readJsonObject = Effect.fn("readCursorPluginJson")(function* (
   file: string,
+  budget: CursorSkillScanBudget,
 ): Effect.fn.Return<Record<string, unknown> | undefined, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
-  const contents = yield* orUndefined(fileSystem.readFileString(file));
+  const info = yield* orUndefined(fileSystem.stat(file), budget);
+  if (info?.type !== "File" || info.size > MAX_SKILL_BYTES || info.size > budget.remainingBytes) {
+    return undefined;
+  }
+  const contents = yield* orUndefined(fileSystem.readFileString(file), budget);
   if (contents === undefined) return undefined;
+  budget.remainingBytes -= info.size;
   const parsed = yield* decodePluginJson(contents).pipe(Effect.orElseSucceed(() => undefined));
   return isRecord(parsed) ? parsed : undefined;
 });
@@ -349,10 +364,12 @@ const resolvePluginRelativePath = Effect.fn("resolveCursorPluginRelativePath")(f
 
 const readPluginManifest = Effect.fn("readCursorPluginManifest")(function* (
   pluginRoot: string,
+  budget: CursorSkillScanBudget,
 ): Effect.fn.Return<Record<string, unknown> | undefined, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   for (const relativePath of PLUGIN_MANIFEST_PATHS) {
-    const manifest = yield* readJsonObject(path.join(pluginRoot, relativePath));
+    if (budget.exhausted) return undefined;
+    const manifest = yield* readJsonObject(path.join(pluginRoot, relativePath), budget);
     if (manifest) return manifest;
   }
   return undefined;
@@ -369,7 +386,7 @@ const discoverSkillsInPlugin = Effect.fn("discoverCursorSkillsInPlugin")(functio
   const info = yield* orUndefined(fileSystem.stat(input.directory), input.budget);
   if (info?.type !== "Directory") return [];
 
-  const manifest = yield* readPluginManifest(input.directory);
+  const manifest = yield* readPluginManifest(input.directory, input.budget);
   const skills: ServerProviderSkill[] = [];
   const readContainedSkill = (directory: string) =>
     readCursorSkill({
@@ -413,10 +430,11 @@ const discoverSkillsInPlugin = Effect.fn("discoverCursorSkillsInPlugin")(functio
   if (manifest && "skills" in manifest) {
     const declared = manifest.skills;
     if (typeof declared === "string") {
+      if (!takeScanEntry(input.budget)) return skills;
       yield* readDeclaredSkills(declared, true);
     } else if (Array.isArray(declared)) {
       for (const entry of declared) {
-        if (input.budget.exhausted) break;
+        if (!takeScanEntry(input.budget)) break;
         if (typeof entry !== "string") continue;
         yield* readDeclaredSkills(entry, false);
       }
@@ -476,6 +494,7 @@ const cursorPluginInstalls = Effect.fn("cursorPluginInstalls")(function* (input:
   const localEntries = yield* listDirectoryNames(localRoot, input.budget);
   if (resolvedLocalRoot && localEntries) {
     for (const entry of localEntries) {
+      if (!takeScanEntry(input.budget)) break;
       if (entry.startsWith(".")) continue;
       const child = path.join(localRoot, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
@@ -506,6 +525,7 @@ const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(fun
   const marketplaces = yield* listDirectoryNames(input.cacheRoot, input.budget);
   if (!marketplaces) return;
   for (const marketplace of marketplaces) {
+    if (!takeScanEntry(input.budget)) return;
     if (marketplace.startsWith(".")) continue;
     const marketplaceDirectory = path.join(input.cacheRoot, marketplace);
     const marketplaceInfo = yield* orUndefined(fileSystem.stat(marketplaceDirectory), input.budget);
@@ -513,6 +533,7 @@ const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(fun
     const plugins = yield* listDirectoryNames(marketplaceDirectory, input.budget);
     if (!plugins) continue;
     for (const plugin of plugins) {
+      if (!takeScanEntry(input.budget)) return;
       if (plugin.startsWith(".")) continue;
       const pluginDirectory = path.join(marketplaceDirectory, plugin);
       const pluginInfo = yield* orUndefined(fileSystem.stat(pluginDirectory), input.budget);
@@ -521,6 +542,7 @@ const addCompletedCachePlugins = Effect.fn("addCompletedCursorCachePlugins")(fun
       if (!versions) continue;
       const completed: string[] = [];
       for (const version of versions) {
+        if (!takeScanEntry(input.budget)) return;
         if (version.startsWith(".")) continue;
         const versionDirectory = path.join(pluginDirectory, version);
         const versionInfo = yield* orUndefined(fileSystem.stat(versionDirectory), input.budget);

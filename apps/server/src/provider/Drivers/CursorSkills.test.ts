@@ -448,6 +448,38 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("skips an oversized plugin manifest and still reads skills/", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-plugin-manifest-home-",
+          })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const plugin = path.join(userHome, ".cursor", "plugins", "local", "huge");
+        const skillDirectory = path.join(plugin, "skills", "kept");
+        yield* fileSystem.makeDirectory(path.join(plugin, ".cursor-plugin"), { recursive: true });
+        yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(plugin, ".cursor-plugin", "plugin.json"),
+          "x".repeat(1_000_001),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(skillDirectory, "SKILL.md"),
+          "---\ndescription: kept\n---\n",
+        );
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+        expect(skills.map((skill) => skill.name)).toEqual(["kept"]);
+        expect(
+          (yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Success");
+      }),
+    ));
+
   it.skipIf(!symlinksSupported)(
     "skips a plugin skill file that points outside the plugin",
     async () =>
