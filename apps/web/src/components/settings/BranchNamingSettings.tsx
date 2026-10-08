@@ -70,7 +70,14 @@ export function BranchNamingSettings() {
             </SelectPopup>
           </Select>
         }
-      />
+      >
+        {!modeMixed && settings.branchNamingMode === "semantic" ? (
+          <p className="max-w-xl pt-2 pb-2 text-xs leading-normal text-pretty text-muted-foreground/80">
+            The model chooses a prefix that describes the work, such as feat/add-search,
+            fix/login-timeout, or refactor/auth.
+          </p>
+        ) : null}
+      </SettingsRow>
       {!modeMixed && settings.branchNamingMode === "static" ? (
         <SettingsRow
           serverScoped
@@ -108,12 +115,6 @@ export function BranchNamingSettings() {
             />
           }
         />
-      ) : null}
-      {!modeMixed && settings.branchNamingMode === "semantic" ? (
-        <p className="pb-3 text-sm text-muted-foreground">
-          The model chooses a prefix that describes the work, such as feat/add-search,
-          fix/login-timeout, or refactor/auth.
-        </p>
       ) : null}
       {!modeMixed && settings.branchNamingMode === "custom" ? (
         <SettingsRow
