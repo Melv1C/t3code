@@ -36,7 +36,17 @@ export function BranchNamingSettings() {
         serverScoped
         settingKeys={["branchNamingMode"]}
         {...searchableSetting("worktree-branch-naming")}
-        description="Choose how new worktree branches are named from your first message."
+        description={
+          <>
+            Choose how new worktree branches are named from your first message.
+            {!modeMixed && settings.branchNamingMode === "semantic" ? (
+              <span className="mt-1 block text-pretty">
+                The model chooses a prefix that describes the work, such as feat/add-search,
+                fix/login-timeout, or refactor/auth.
+              </span>
+            ) : null}
+          </>
+        }
         resetAction={
           settings.branchNamingMode !== DEFAULT_SERVER_SETTINGS.branchNamingMode || modeMixed ? (
             <SettingResetButton
@@ -70,14 +80,7 @@ export function BranchNamingSettings() {
             </SelectPopup>
           </Select>
         }
-      >
-        {!modeMixed && settings.branchNamingMode === "semantic" ? (
-          <p className="max-w-xl pt-2 pb-2 text-xs leading-normal text-pretty text-muted-foreground/80">
-            The model chooses a prefix that describes the work, such as feat/add-search,
-            fix/login-timeout, or refactor/auth.
-          </p>
-        ) : null}
-      </SettingsRow>
+      />
       {!modeMixed && settings.branchNamingMode === "static" ? (
         <SettingsRow
           serverScoped
