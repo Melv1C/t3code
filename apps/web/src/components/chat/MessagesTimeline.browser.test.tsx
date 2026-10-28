@@ -365,7 +365,10 @@ describe("MessagesTimeline messages", () => {
     onContentOverflowChange.mockClear();
 
     await screen.rerender(element());
-    expect(onContentOverflowChange).not.toHaveBeenCalledWith(false);
+    await vi.waitFor(() => {
+      expect(onContentOverflowChange).toHaveBeenLastCalledWith(true);
+      expect(onContentOverflowChange).not.toHaveBeenCalledWith(false);
+    });
   });
 
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
