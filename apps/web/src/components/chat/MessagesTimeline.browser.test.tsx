@@ -345,6 +345,29 @@ describe("MessagesTimeline messages", () => {
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
   });
 
+  it("keeps reporting overflow while a parent re-renders it", async () => {
+    setup();
+    const props = baseProps();
+    const onContentOverflowChange = vi.fn();
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    const element = () => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        onContentOverflowChange={onContentOverflowChange}
+        onIsAtEndChange={() => {}}
+      />
+    );
+    await using screen = await renderElement(element());
+    await vi.waitFor(() => expect(onContentOverflowChange).toHaveBeenLastCalledWith(true));
+    onContentOverflowChange.mockClear();
+
+    await screen.rerender(element());
+    expect(onContentOverflowChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
       'Without reading a file, do you have <global-agent-instructions scope="workspace">',

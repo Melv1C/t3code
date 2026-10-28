@@ -1144,7 +1144,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
-  const setTimelineList = (list: LegendListRef | null) => {
+  const scheduleContentSizeChangedRef = useRef<(() => void) | null>(null);
+  // A new ref callback identity detaches the list, and detaching reports no overflow.
+  const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
@@ -1171,8 +1173,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const stopListeningToContentSize = list
       ?.getState()
       .listen("totalSize", () => scheduleContentSizeChanged());
+    scheduleContentSizeChangedRef.current = scheduleContentSizeChanged;
     scheduleContentSizeChanged();
     return () => {
+      scheduleContentSizeChangedRef.current = null;
       stopListeningToContentSize?.();
       stopRememberingRelease?.();
       onContentOverflowChange?.(false);
@@ -1190,7 +1194,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       listRef.current = null;
       registerTimeline?.(null);
     };
-  };
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-measures overflow and thread settling after renders that change rows or the composer inset without resizing the content
+  useLayoutEffect(() => {
+    scheduleContentSizeChangedRef.current?.();
+  });
 
   useThreadFindPositionReader({
     threadKey: listIdentityKey,
